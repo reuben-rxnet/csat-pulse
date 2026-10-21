@@ -8,6 +8,7 @@ const { describeRules, describeExclusions } = require('../services/summary');
 
 const WHATS_NEW = [
   ['21 Oct 2026', [
+    'New <b>How CSAT Pulse is built</b> section on this page: the platform, and why it was built this way.',
     'All ticket sources defined in HDA are now listed under <b>Default sources</b> (synced daily, or with <b>Sync from HDA now</b>), not only the ones seen on tickets.',
     'New look for the whole site, and a redesigned <b>Dashboard</b> with insights, a group leaderboard and a follow-up queue you can work through on the page.',
     'New <b>About &amp; help</b> page (this page) and a public <a href="/about-survey">About this survey</a> page, linked from every survey email.',
@@ -223,6 +224,22 @@ function faq(ctx) {
   ];
 }
 
+// "How it's built": the platform, with live details that are safe to show (no host names, accounts or passwords).
+function TECH() {
+  const mail = { smtp: 'SMTP through the company mail relay', graph: 'Microsoft Graph (Microsoft 365)', file: 'Test mode – emails are saved to a folder, not sent' }[config.mail.transport] || config.mail.transport;
+  const signIn = config.admin.authMode === 'easyauth' ? 'Microsoft Entra ID (company accounts)' : 'Username and password (Entra ID once registered)';
+  const hdaAuth = { login: 'HDA user sign-in', apikey: 'HDA API key', trusted: 'HDA trusted application' }[config.hda.authMode] || config.hda.authMode;
+  return [
+    ['Main program', '<b>Node.js</b>, written in JavaScript', `Node.js ${esc(process.version)}`],
+    ['Database', '<b>PostgreSQL</b> – surveys, answers, settings, reports and change history', 'Docker on the current machine; Azure Database for PostgreSQL suggested for go-live'],
+    ['Web pages', 'Node.js’s built-in web server, no web framework; pages built on the server as HTML, CSS and a little JavaScript', 'Light and dark mode; follows “reduce motion”'],
+    ['Dashboard charts &amp; PDF reports', 'Written for CSAT Pulse itself – no chart or PDF library', 'PDFs in A4, Helvetica'],
+    ['Email', 'SMTP or Microsoft Graph, using <span class="mono">nodemailer</span>', esc(mail)],
+    ['HDA connection', 'HDA REST API (sign-in, ticket, group, source and membership lookups)', `${esc(hdaAuth)} · checked every ${config.scheduler.pollMinutes} minutes`],
+    ['Admin sign-in', 'Username and password, or Microsoft Entra ID', esc(signIn)],
+  ];
+}
+
 // ---------- admin help page ----------
 // Simple line icons (24×24, stroke = currentColor).
 const ICONS = {
@@ -237,7 +254,7 @@ const ICONS = {
   arrow: 'M5 12h14M13 6l6 6-6 6', chevron: 'M9 6l6 6-6 6', grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
   sparkle: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z', question: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01',
   alert: 'M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01', book: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5zM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5',
-  globe: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20', wrench: 'M14.7 6.3a4 4 0 0 0 5 5L22 14l-8 8-2.3-2.3a4 4 0 0 0-5-5L4 12l8-8z',
+  layers: 'M12 2l10 5-10 5L2 7zM2 17l10 5 10-5M2 12l10 5 10-5', globe: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20', wrench: 'M14.7 6.3a4 4 0 0 0 5 5L22 14l-8 8-2.3-2.3a4 4 0 0 0-5-5L4 12l8-8z',
 };
 const icon = (name, cls = 'ico') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICONS[name]}"/></svg>`;
 const GROUP_ICONS = { 'Setting up surveys': 'sliders', Results: 'chart', 'Fixing problems': 'wrench', 'Global admins': 'shield' };
@@ -254,7 +271,7 @@ function helpPage(admin, { settings, defaultSources, layout, forId = '' }) {
   const initials = (s.name || 'CSAT').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
   const toc = [['about', 'About CSAT Pulse', 'info'], ['features', 'Features', 'grid'], ['how', 'How do I…?', 'book'], ['why-not', 'Why no survey?', 'alert'],
-    ['glossary', 'Glossary', 'list'], ['faq', 'Questions', 'question'], ['new', 'What’s new', 'sparkle'], ['contact', 'Contact', 'mail']];
+    ['glossary', 'Glossary', 'list'], ['faq', 'Questions', 'question'], ['new', 'What’s new', 'sparkle'], ['tech', 'How it’s built', 'layers'], ['contact', 'Contact', 'mail']];
   const popular = [['switch-on', 'Switch on a group'], ['report-download', 'Download a report'], ['report-schedule', 'Schedule a report'], ['missing-email', 'Fix a missing email'], ['why-not', 'Why no survey?']];
 
   const features = [
@@ -346,6 +363,21 @@ function helpPage(admin, { settings, defaultSources, layout, forId = '' }) {
   <section class="help-sec" id="new" data-search>
     <div class="sec-head">${icon('sparkle', 'ico sec-ico')}<div><h2>What’s new</h2></div></div>
     <ol class="timeline">${WHATS_NEW.map(([date, items]) => `<li><div class="tl-date">${esc(date)}</div><ul>${items.map(i => `<li>${i}</li>`).join('')}</ul></li>`).join('')}</ol>
+  </section>
+
+  <section class="help-sec" id="tech" data-search data-nobody data-kind="Section" data-title="How CSAT Pulse is built" data-keys="technology platform built stack node nodejs postgresql postgres database docker azure hosting smtp graph email entra sign in architecture libraries">
+    <div class="sec-head">${icon('layers', 'ico sec-ico')}<div><h2>How CSAT Pulse is built</h2>
+      <p class="sec-sub">A small, self-contained web application made from standard building blocks, with very few outside parts.</p></div></div>
+    <div class="tw"><table class="tech"><thead><tr><th>Part</th><th>Built on</th><th>Right now</th></tr></thead><tbody>
+      ${TECH(admin).map(([part, on, now]) => `<tr><td class="b">${part}</td><td>${on}</td><td class="small muted">${now}</td></tr>`).join('')}
+    </tbody></table></div>
+    <h3>Why it’s built this way</h3>
+    <div class="roles">
+      <div class="role">${icon('shield', 'ico role-ico')}<div><b>Easy to approve</b><p>Only two outside libraries – <span class="mono">pg</span> (database) and <span class="mono">nodemailer</span> (email) – so IT security has almost nothing third-party to review.</p></div></div>
+      <div class="role">${icon('globe', 'ico role-ico')}<div><b>Easy to host</b><p>Runs anywhere Node.js and PostgreSQL run: a company server, a Docker container (a Dockerfile is included) or Azure App Service with Azure Database for PostgreSQL.</p></div></div>
+      <div class="role">${icon('wrench', 'ico role-ico')}<div><b>Easy to look after</b><p>Few moving parts and nothing that needs frequent updates. Charts and PDF reports are drawn by CSAT Pulse itself, without extra libraries.</p></div></div>
+    </div>
+    <p class="small muted">The code is kept in a private GitHub repository. HDA field names live in one settings file (config/hda-mapping.json), so a change in HDA rarely needs a code change.</p>
   </section>
 
   <section class="help-sec" id="contact" data-search>

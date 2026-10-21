@@ -394,3 +394,4 @@ a.dchip:hover{filter:brightness(.96)}
 .senti-i b{font:800 1.2rem var(--font-d)}.senti-i span{font-size:.74rem;color:var(--muted);font-weight:600}
 .senti-i.good b{color:var(--good)}.senti-i.mid b{color:var(--muted)}.senti-i.bad b{color:var(--bad)}
 .dcard #dist{display:flex;flex-direction:column;justify-content:center}
+table.tech td{vertical-align:top}table.tech td:first-child{white-space:nowrap}
