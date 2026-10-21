@@ -1,0 +1,29 @@
+# Local trial: Postgres + mock HDA + the app. `docker compose up --build`, then open http://localhost:3100/admin
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped   # comes back by itself when Docker Desktop starts
+    environment: { POSTGRES_USER: csat, POSTGRES_PASSWORD: csat, POSTGRES_DB: csat }
+    volumes: [ "pgdata:/var/lib/postgresql/data" ]
+    ports: [ "5433:5432" ]
+  mock-hda:
+    build: .
+    command: ["node", "mock/hda-mock-server.js"]
+    environment: { MOCK_CLOSE_EVERY_SECONDS: "60" }
+    ports: [ "4010:4010" ]
+  app:
+    build: .
+    depends_on: [ db, mock-hda ]
+    environment:
+      DATABASE_URL: postgres://csat:csat@db:5432/csat
+      HDA_BASE_URL: http://mock-hda:4010/api
+      HDA_API_KEY: mock-api-key
+      HDA_USERNAME: csat.api
+      PUBLIC_BASE_URL: http://localhost:3100
+      MAIL_TRANSPORT: file
+      ADMIN_PASSWORD: admin
+      POLL_INTERVAL_MINUTES: "1"
+    volumes: [ "./outbox:/app/outbox" ]
+    ports: [ "3100:3000" ]
+volumes:
+  pgdata: {}

@@ -1,0 +1,87 @@
+{
+  "_readme": "Maps HDA property names to the fields the CSAT service needs. Run `npm run hda:discover` to list the real property names for your HDA instance, then edit the right-hand values. Dotted paths (e.g. AssignedUserGroup.Description) read related objects, as supported by /WSC/Projection. Each ticket type can override closedStatusIds and any column, and add extra `filter` conditions.",
+  "tickets": {
+    "types": [
+      {
+        "entity": "Incident",
+        "label": "Incident",
+        "closedStatusIds": [
+          "S18C",
+          "S5"
+        ],
+        "filter": [
+          { "property": "ObjectTypeID", "op": "in", "value": ["T10C", "T10L", "T8C", "T27L", "T19L", "T14L"] }
+        ],
+        "columns": {}
+      },
+      {
+        "entity": "Incident",
+        "label": "Request",
+        "closedStatusIds": [
+          "S18C",
+          "S5"
+        ],
+        "filter": [
+          { "property": "ObjectTypeID", "op": "in", "value": ["1", "T12L", "T16L", "T29L"] }
+        ],
+        "columns": {}
+      }
+    ],
+    "statusProperty": "TicketStatusID",
+    "closedDateProperty": "C70C",
+    "dateFilterOperator": "gt",
+    "pageSize": 200,
+    "columns": {
+      "id": "ID",
+      "number": "ID",
+      "subject": "Subject",
+      "description": "ProblemHTML",
+      "solution": "SolutionHTML",
+      "source": "TicketSource.Description",
+      "requesterEmail": "Contact.EMail",
+      "requesterName": "Contact.LastName",
+      "requesterFirstName": "Contact.CONFNAME",
+      "requesterId": "ContactID",
+      "ownerGroupId": "OwnerUserGroupID",
+      "ownerGroupName": "OwnerUserGroup.Description",
+      "ticketOwner": "AssignedUser.FullName",
+      "ticketOwnerEmail": "AssignedUser.EMail",
+      "priority": "TicketPriority.Description",
+      "category": "Service.Description",
+      "closeCode": null,
+      "closedAt": "C70C"
+    },
+    "statusFilterOperator": "eq"
+  },
+  "groups": {
+    "entity": "UserGroup",
+    "filter": [],
+    "columns": {
+      "id": "ID",
+      "name": "Description",
+      "leadEmail": null
+    }
+  },
+  "sources": {
+    "_readme": "Ticket sources (Incident.TicketSource). Synced with the owner groups; new ones arrive switched off. Inactive = no longer offered in HDA.",
+    "entity": "TicketSource",
+    "columns": { "id": "ID", "name": "Description", "active": "Active" }
+  },
+  "access": {
+    "_readme": "Who is in which owner group (HDA Groups/Operators). Team admins may manage only these groups.",
+    "entity": "UserGroupAssignment",
+    "userId": "UserID",
+    "username": "User.Username",
+    "upn": "User.USERUPN",
+    "fullName": "User.FullName",
+    "groupId": "UserGroupID",
+    "groupName": "UserGroup.Description"
+  },
+  "writeBack": {
+    "enabled": false,
+    "scoreProperty": "CSATScore",
+    "commentProperty": null
+  },
+  "_fromHDAConnect": "Confirmed from the HDAConnect repo (TicketService/HdaClientRepository): Incident uses Subject, ProblemHTML, ContactID, OwnerUserGroupID, TicketStatusID, TicketPriorityID, ServiceID; Contact has EMail; group IDs look like G815L; status S3C = new. HDAConnect filters with op \"is\" (Contact.EMail) and \"equals\" (Service.Name); if \"eq\" fails, try those in statusFilterOperator.",
+  "_fromQA": "Verified against HDA QA on 2026-10-16. Incidents and Requests are both entity Incident, told apart by ObjectTypeID (Incident: T10C Incident, T10L Data Center, T8C HCM, T27L Retail LATAM, T19L RETAIL, T14L SSS; Request: 1 Service Request, T12L HR, T16L SSS, T29L Car Fleet). Left out on purpose: T21L Security Incident, T24L Quality issue, T25L IP Violation, T26L Master Data Mgmt, T30L Report Leaks. Status S18C = Solved (ClosureDate still empty), S5 = Closed (ClosureDate set), so surveys go out on S5. Changed 2026-10-21 (Reuben): surveys go out when a ticket is Solved – types watch S18C and S5 and use C70C, the custom \"solved at\" date (set on Solve, kept when HDA auto-closes ~5 days later; ResolutionDate/SolutionDate are not queryable). Ticket number is ID (no Code field). Contact.FirstName is empty; Contact.LastName holds the full name. No closure-code field found, so closeCode is null and the excluded-closure-codes rule has no effect. QA masks user emails (AssignedUser.EMail uses # instead of @). LoginEx needs an Accept-Language header (src/hda/client.js sends en-US)."
+}

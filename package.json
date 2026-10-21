@@ -1,0 +1,23 @@
+{
+  "name": "csat-hda",
+  "version": "1.0.0",
+  "description": "CSAT surveys for closed HDA tickets, with owner-group and source selection and a KPI dashboard",
+  "private": true,
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "migrate": "node scripts/migrate.js",
+    "poll:once": "node scripts/run-once.js",
+    "hda:discover": "node scripts/hda-discover.js",
+    "mock:hda": "node mock/hda-mock-server.js",
+    "seed:demo": "node scripts/seed-demo.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "nodemailer": "^10.0.16",
+    "pg": "^8.12.0"
+  }
+}
