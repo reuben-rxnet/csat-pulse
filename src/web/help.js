@@ -8,6 +8,8 @@ const { describeRules, describeExclusions } = require('../services/summary');
 
 const WHATS_NEW = [
   ['21 Oct 2026', [
+    'Company single sign-on (OpenID Connect, e.g. Microsoft Entra ID) is ready: once IAM has registered the app, people sign in with their company account and <b>Sign out</b> appears next to their name.',
+    'CSAT Pulse stops signing in to HDA after a rejected password, so an AD account can’t be locked; global admins see a red bar with <b>Try again</b>.',
     'New <b>How CSAT Pulse is built</b> section on this page: the platform, and why it was built this way.',
     'All ticket sources defined in HDA are now listed under <b>Default sources</b> (synced daily, or with <b>Sync from HDA now</b>), not only the ones seen on tickets.',
     'New look for the whole site, and a redesigned <b>Dashboard</b> with insights, a group leaderboard and a follow-up queue you can work through on the page.',
@@ -220,6 +222,7 @@ function faq(ctx) {
     ['Where do the numbers come from?', 'From the surveys and answers stored in CSAT Pulse. The dashboard and the PDF reports use exactly the same calculations, so they always match. Test surveys are left out everywhere.'],
     ['Are comments anonymous?', 'Admins of the owner group can see the comment with the ticket, so they can follow up. Reports never include the requester’s name; agent names appear only in custom reports.'],
     ['What if the person says their issue isn’t fixed?', 'A survey answer doesn’t reopen the ticket by itself. The survey email and the <a href="/about-survey">About this survey</a> page tell people to reopen the ticket in the IT portal or contact the Service Desk team. If a comment says the issue isn’t fixed, reopen or follow up the ticket in HDA, and use the <a href="#follow-up">low-score follow-up queue</a> to track it.'],
+    ['What if CSAT Pulse can’t sign in to HDA?', 'If HDA rejects the username or password (for example after an AD password change), CSAT Pulse stops trying straight away so the account isn’t locked, and global admins see a red bar at the top of every page. Update HDA_PASSWORD in the .env file and restart the app, or click <b>Try again</b>. If HDA simply can’t be reached (off VPN, HDA down), it keeps retrying by itself and catches up afterwards.'],
     ['Is anything switched on automatically?', 'No. New owner groups and sources from HDA arrive switched off. Only an admin switches a group on, one at a time.'],
   ];
 }
@@ -227,7 +230,7 @@ function faq(ctx) {
 // "How it's built": the platform, with live details that are safe to show (no host names, accounts or passwords).
 function TECH() {
   const mail = { smtp: 'SMTP through the company mail relay', graph: 'Microsoft Graph (Microsoft 365)', file: 'Test mode – emails are saved to a folder, not sent' }[config.mail.transport] || config.mail.transport;
-  const signIn = config.admin.authMode === 'easyauth' ? 'Microsoft Entra ID (company accounts)' : 'Username and password (Entra ID once registered)';
+  const signIn = config.admin.authMode === 'oidc' ? 'Company single sign-on (OpenID Connect)' : config.admin.authMode === 'easyauth' ? 'Microsoft Entra ID via Azure App Service' : 'Username and password (company sign-on once IAM has registered the app)';
   const hdaAuth = { login: 'HDA user sign-in', apikey: 'HDA API key', trusted: 'HDA trusted application' }[config.hda.authMode] || config.hda.authMode;
   return [
     ['Main program', '<b>Node.js</b>, written in JavaScript', `Node.js ${esc(process.version)}`],
@@ -236,7 +239,7 @@ function TECH() {
     ['Dashboard charts &amp; PDF reports', 'Written for CSAT Pulse itself – no chart or PDF library', 'PDFs in A4, Helvetica'],
     ['Email', 'SMTP or Microsoft Graph, using <span class="mono">nodemailer</span>', esc(mail)],
     ['HDA connection', 'HDA REST API (sign-in, ticket, group, source and membership lookups)', `${esc(hdaAuth)} · checked every ${config.scheduler.pollMinutes} minutes`],
-    ['Admin sign-in', 'Username and password, or Microsoft Entra ID', esc(signIn)],
+    ['Admin sign-in', 'Company single sign-on with OpenID Connect (Microsoft Entra ID or another IAM provider), or a username and password', esc(signIn)],
   ];
 }
 

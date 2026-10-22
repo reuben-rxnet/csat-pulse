@@ -88,8 +88,20 @@ const config = {
     maxRecipients: int('REPORT_MAX_RECIPIENTS', 50),
   },
 
+  // Company single sign-on (ADMIN_AUTH_MODE=oidc), e.g. Microsoft Entra ID: OIDC_ISSUER=https://login.microsoftonline.com/<tenant-id>/v2.0
+  oidc: {
+    issuer: env('OIDC_ISSUER', ''),
+    clientId: env('OIDC_CLIENT_ID', ''),
+    clientSecret: env('OIDC_CLIENT_SECRET', ''),
+    redirectPath: env('OIDC_REDIRECT_PATH', '/auth/callback'),
+    scopes: env('OIDC_SCOPES', 'openid profile email'),
+    adminRole: env('OIDC_ADMIN_ROLE', 'CSAT.GlobalAdmin'), // app role that makes someone a global admin (as well as ADMIN_EMAILS)
+    sessionSecret: env('SESSION_SECRET', ''),
+    sessionHours: int('SESSION_HOURS', 8),
+  },
+
   admin: {
-    authMode: env('ADMIN_AUTH_MODE', 'basic'), // basic | easyauth
+    authMode: env('ADMIN_AUTH_MODE', 'basic'), // basic | oidc | easyauth
     username: env('ADMIN_USERNAME', 'admin'),
     password: env('ADMIN_PASSWORD', ''),
     allowedEmails: env('ADMIN_EMAILS', '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),

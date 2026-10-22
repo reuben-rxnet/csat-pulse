@@ -44,6 +44,8 @@ function describe(e, groupName = id => id) {
     case 'report.schedule_toggle': return `${d.enabled ? 'Resumed' : 'Paused'} the scheduled report "${d.name}"`;
     case 'report.schedule_delete': return `Deleted the scheduled report "${d.name}"`;
     case 'report.schedule_run': return `Sent the scheduled report "${d.name}" now`;
+    case 'hda.retry': return d.ok ? 'Signed in to HDA again after it was paused' : 'Tried to sign in to HDA again (still failing)';
+    case 'auth.sign_in': return `Signed in${d.name ? ` (${d.name})` : ''}`;
     case 'followup.update': return `Marked the low-score follow-up for ${ticket} as ${d.status}`;
     default: return e.action;
   }

@@ -4,7 +4,8 @@ const path = require('path');
 const config = require('./config');
 const db = require('./db');
 const { Router, readBody, html, json, redirect, serveStatic, send } = require('./web/http');
-const { sameOrigin } = require('./web/auth');
+const { sameOrigin, cookies, authProblems } = require('./web/auth');
+const oidc = require('./web/oidc');
 const views = require('./web/views');
 const { findByToken, submit } = require('./services/responses');
 const { getSettings, saveSettings, getAllGroupSettings, getGroupSettings, saveGroupSettings, effectiveSettings, DEFAULTS } = require('./services/settings');
@@ -20,6 +21,7 @@ const { listMissing, countMissing, findMissing, fixAndSend, dismiss, contactsToF
 const reportsSvc = require('./services/reports');
 const R = require('./report/schedule');
 const help = require('./web/help');
+const { hda: hdaClient } = require('./hda/client');
 const scheduler = require('./scheduler');
 
 const router = new Router();
@@ -37,6 +39,12 @@ async function requireAdmin(req, res, ctx) {
     html(res, views.messagePage('Could not check your HDA groups', `CSAT Pulse could not reach HDA to look up your owner groups (${e.message}). Try again in a minute.`), 502); return false;
   }
   if (!u) {
+    // Company sign-in: send people to the sign-in page and bring them back to where they were.
+    if (config.admin.authMode === 'oidc') {
+      if (authProblems().length) { html(res, views.messagePage('Sign-in is not set up yet', `Company sign-in needs these settings in .env: ${authProblems().join(', ')}.`), 503); return false; }
+      if (req.method === 'GET' && !req.url.startsWith('/admin/api/')) { redirect(res, '/auth/login?next=' + encodeURIComponent(req.url)); return false; }
+      json(res, { error: 'Your session has ended. Reload the page to sign in again.' }, 401); return false;
+    }
     if (config.admin.authMode === 'basic') { send(res, 401, 'Sign-in required', 'text/plain', { 'WWW-Authenticate': `Basic realm="${config.brand.product} admin"` }); return false; }
     send(res, 401, 'Sign-in required', 'text/plain'); return false;
   }
@@ -64,6 +72,31 @@ router.get('/health', async (req, res) => {
 router.get('/', (req, res) => redirect(res, '/admin'));
 // Public: explains the survey to the people who receive it (linked from every survey email and page).
 router.get('/about-survey', async (req, res) => html(res, help.aboutSurveyPage({ settings: await getSettings(), layout: views.layout })));
+// ---------- company sign-in (ADMIN_AUTH_MODE=oidc) ----------
+router.get('/auth/login', async (req, res, ctx) => {
+  if (config.admin.authMode !== 'oidc') return redirect(res, '/admin');
+  if (authProblems().length) return html(res, views.messagePage('Sign-in is not set up yet', `Company sign-in needs these settings in .env: ${authProblems().join(', ')}.`), 503);
+  try { const r = await oidc.startLogin(ctx.query.get('next')); redirect(res, r.location, { 'Set-Cookie': r.setCookie }); }
+  catch (e) { console.error('[auth] sign-in start failed:', e.message); html(res, views.messagePage('Sign-in is not available', `The company sign-in service could not be reached (${e.message}). Try again in a minute.`), 502); }
+});
+router.get(config.oidc.redirectPath, async (req, res, ctx) => {
+  if (config.admin.authMode !== 'oidc') return redirect(res, '/admin');
+  try {
+    const r = await oidc.finishLogin(ctx.query, cookies(req)[oidc.FLOW_COOKIE]);
+    await audit(r.who.login, 'auth.sign_in', { name: r.who.name });
+    redirect(res, r.next, { 'Set-Cookie': r.setCookies });
+  } catch (e) {
+    console.warn('[auth] sign-in failed:', e.message);
+    html(res, views.messagePage('Sign-in failed', `${e.message} Go to ${config.publicBaseUrl}/admin to try again.`), 401);
+  }
+});
+router.get('/auth/logout', async (req, res) => {
+  if (config.admin.authMode !== 'oidc') return redirect(res, '/admin');
+  const r = await oidc.logoutTarget();
+  redirect(res, r.location, { 'Set-Cookie': [r.setCookie, clearViewAsCookie()] });
+});
+router.get('/auth/signed-out', (req, res) => html(res, views.messagePage('Signed out', 'You have signed out of CSAT Pulse. Close this tab, or open the dashboard again to sign back in.')));
+
 router.get('/favicon.ico', (req, res) => { res.writeHead(204); res.end(); });
 
 const ERRORS = {
@@ -151,6 +184,14 @@ router.get('/admin/settings', requireAdmin, async (req, res, ctx) => {
 });
 
 // Must be registered before /admin/groups/:id, or "sync" is taken as a group ID (routes match in order).
+// One new HDA sign-in attempt after it was paused for a rejected password (see HdaClient.authBlocked).
+router.post('/admin/hda/retry', requireAdmin, requireGlobal, async (req, res, ctx) => {
+  const client = hdaClient();
+  client.clearAuthBlock();
+  try { await client.getToken(); await audit(ctx.actor, 'hda.retry', { ok: true }); redirect(res, '/admin/settings?notice=' + encodeURIComponent('Signed in to HDA again. Ticket checks continue.')); }
+  catch (e) { await audit(ctx.actor, 'hda.retry', { ok: false }); redirect(res, '/admin/settings?error=' + encodeURIComponent('HDA sign-in still fails: ' + e.message)); }
+});
+
 router.post('/admin/groups/sync', requireAdmin, requireGlobal, async (req, res, ctx) => {
   const back = (await readBody(req)).back === 'sources' ? 'tab=sources&' : '';
   try { await syncGroups(); await audit(ctx.actor, 'group.sync', {}); redirect(res, `/admin/settings?${back}notice=` + encodeURIComponent('Owner groups and ticket sources synced from HDA.')); }
@@ -467,7 +508,8 @@ const server = http.createServer(async (req, res) => {
 
 async function main() {
   await db.migrate();
-  if (config.admin.authMode === 'basic' && !config.admin.password) console.warn('[admin] ADMIN_PASSWORD is not set: admin pages are locked.');
+  if (authProblems().length) console.warn(`[admin] sign-in mode "${config.admin.authMode}" is missing ${authProblems().join(', ')}: admin pages are locked.`);
+  if (config.admin.authMode === 'oidc') console.log(`[auth] company sign-in via ${config.oidc.issuer || '(no issuer set)'} · redirect URI ${oidc.redirectUri()}`);
   server.listen(config.port, () => console.log(`[http] ${config.brand.product} listening on :${config.port} (${config.publicBaseUrl})`));
   scheduler.start();
 }

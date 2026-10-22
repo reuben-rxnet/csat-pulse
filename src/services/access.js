@@ -47,7 +47,7 @@ async function resolveAdmin(req) {
   if (u.global) {
     const viewAs = cookies(req)[VIEW_AS_COOKIE];
     if (viewAs) return { ...(await teamAccess(viewAs)), viewAs: true, realName: u.name };
-    return { role: 'global', name: u.name };
+    return { role: 'global', name: u.displayName || u.name, login: u.name };
   }
   const t = await teamAccess(u.name);
   if (!t.groups.size) return { denied: true, name: u.name, reason: 'is not assigned to any owner group in HDA (Groups/Operators). Ask a CSAT Pulse global admin for access.' };

@@ -4,6 +4,7 @@ const { esc, nl2br, clip, QUESTION, LABELS } = require('../mail/templates');
 const { greetingName } = require('../names');
 const { describeRules, describeExclusions } = require('../services/summary');
 const { describe } = require('../services/history');
+const { hda } = require('../hda/client');
 
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 const fmtDateTime = d => d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
@@ -31,14 +32,20 @@ function layout({ title, body, admin, active, scripts = [], help = '' }) {
       <a href="/admin/missing" ${active === 'missing' ? 'aria-current="page"' : ''}>Missing emails</a>
       <a href="/admin/test" ${active === 'test' ? 'aria-current="page"' : ''}>Test survey</a>
       <a class="help-link" href="/admin/help${help ? '?for=' + help : ''}" ${active === 'help' ? 'aria-current="page"' : ''} title="About &amp; help${help ? ' for this page' : ''}"><span aria-hidden="true">?</span> Help</a>
-    </nav><div class="me"><span class="avatar-sm" aria-hidden="true">${esc(initials(admin.name))}</span><span class="who">${esc(admin.name)}<small>${isTeam(admin) ? 'Team admin' : 'Global admin'}</small></span></div>` : '';
+    </nav><div class="me"><span class="avatar-sm" aria-hidden="true">${esc(initials(admin.name))}</span><span class="who">${esc(admin.name)}<small>${isTeam(admin) ? 'Team admin' : 'Global admin'}${config.admin.authMode === 'oidc' && !admin.viewAs ? ' · <a class="signout" href="/auth/logout">Sign out</a>' : ''}</small></span></div>` : '';
+  // HDA rejected the sign-in: tell global admins (they can fix .env) and offer one retry.
+  const blocked = admin && (admin.role === 'global' || admin.viewAs) ? hda().authStatus() : null;
+  const authBar = blocked ? `<div class="authbar" role="alert"><div class="viewas-in">
+      <span><b>CSAT Pulse has stopped signing in to HDA</b> (since ${fmtDateTime(blocked.at)}). ${esc(blocked.message)}
+        No tickets are checked until this is fixed. Update <span class="mono">HDA_PASSWORD</span> in <span class="mono">.env</span> and restart the app, or click Try again.</span>
+      <form method="post" action="/admin/hda/retry"><button class="btn" type="submit">Try again</button></form></div></div>` : '';
   const viewAs = admin && admin.viewAs ? `<div class="viewas" role="status"><div class="viewas-in">
       <span>You're viewing CSAT Pulse as <b>${esc(admin.name)}</b>${admin.hdaUser ? '' : ' <span class="pill warn">not found in HDA</span>'}, a team admin with ${admin.groups.size} owner group${admin.groups.size === 1 ? '' : 's'}. This is exactly what they would see.</span>
       <form method="post" action="/admin/view-as/stop"><button class="btn ghost" type="submit">Back to global admin</button></form></div></div>` : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} · ${esc(config.brand.product)}</title><link rel="stylesheet" href="/assets/app.css?v=${ASSET_VERSION}"></head>
 <body><header class="top"><div class="top-in"><a class="brand" href="${admin ? '/admin' : '#'}">${BRAND_MARK}${wordmark()}<span class="app">${esc(config.brand.product)}</span></a>${nav}</div></header>
-${viewAs}<main>${body}</main>${scripts.map(s => `<script src="${s}?v=${ASSET_VERSION}"></script>`).join('')}</body></html>`;
+${authBar}${viewAs}<main>${body}</main>${scripts.map(s => `<script src="${s}?v=${ASSET_VERSION}"></script>`).join('')}</body></html>`;
 }
 
 // One line describing a group's own settings, e.g. "Own sources: Email, Phone · own rules: delay, reminder".

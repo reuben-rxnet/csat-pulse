@@ -18,7 +18,14 @@ class HdaClient {
     this.token = null;
     this.refreshToken = null;
     this.expiresAt = 0;
+    // Set when HDA itself rejects the sign-in (wrong or expired password). While set, no further sign-in is attempted,
+    // so a changed AD password can't lock the account through repeated tries every few minutes.
+    this.authBlocked = null; // { at: Date, message }
   }
+
+  authStatus() { return this.authBlocked ? { ...this.authBlocked } : null; }
+  // "Try again" (Admin settings) or a restart: allow one new sign-in attempt.
+  clearAuthBlock() { this.authBlocked = null; this.token = null; this.refreshToken = null; }
 
   async _fetch(method, path, { query, form, jsonBody, auth = true } = {}) {
     const url = new URL(this.opts.baseUrl + path);
@@ -49,7 +56,11 @@ class HdaClient {
 
     const text = await res.text();
     let json;
-    try { json = JSON.parse(text); } catch { throw new HdaError(`HDA returned non-JSON (${res.status}) for ${path}`, { status: res.status, path, body: text.slice(0, 300) }); }
+    try { json = JSON.parse(text); } catch {
+      // Off the corporate network the HDA host answers every API call with an IIS 404 page.
+      const hint = res.status === 404 ? ' – HDA could not be reached. Check that this computer is connected to the company VPN or network, then try again.' : '';
+      throw new HdaError(`HDA returned non-JSON (${res.status}) for ${path}${hint}`, { status: res.status, path, body: text.slice(0, 300) });
+    }
     if (res.status === 401 && auth && !this._retrying) {
       this.token = null; this._retrying = true;
       try { return await this._fetch(method, path, { query, form, jsonBody, auth }); } finally { this._retrying = false; }
@@ -64,6 +75,20 @@ class HdaClient {
 
   async getToken() {
     if (this.token && Date.now() < this.expiresAt - 60_000) return this.token;
+    if (this.authBlocked) throw new HdaError(`HDA sign-in paused: ${this.authBlocked.message}`, { authBlocked: true });
+    try { return await this._signIn(); }
+    catch (e) {
+      // HDA answered (JSON) and said no → the credentials are the problem. Network errors and the off-VPN 404 page are not.
+      if (e instanceof HdaError && !e.authBlocked && (e.result || [400, 401, 403].includes(e.status))) {
+        const desc = String((e.result && (e.result.desc || e.result.subcode)) || (e.status ? `HTTP ${e.status}` : '')).trim();
+        this.authBlocked = { at: new Date(), message: `HDA rejected the sign-in for "${this.opts.username || 'the API user'}"${desc ? ` (${desc})` : ''}. CSAT Pulse stopped trying so the account isn't locked.` };
+        console.error('[hda] ' + this.authBlocked.message);
+      }
+      throw e;
+    }
+  }
+
+  async _signIn() {
     if (this.refreshToken && this.opts.apiKey) {
       try { return this._store(await this._fetch('POST', '/Authentication/RefreshToken', { auth: false, form: { apikey: this.opts.apiKey, token: this.refreshToken } })); }
       catch { this.refreshToken = null; }

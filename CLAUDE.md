@@ -54,6 +54,11 @@ Dependencies are only `pg` and `nodemailer`; the web layer is plain `node:http` 
   For design checks there is a separate demo database `csat_demo` (seeded with seed-demo, mock HDA) – never seed the real one.
 - Dashboard KPIs: CSAT % (4–5 / responses), avg score, response rate, surveys sent, low scores (1–2) + follow-up queue,
   median time to respond; breakdowns by source, owner group, ticket owner, type, priority, category; skipped reasons.
+- Company sign-in (built 2026-10-22, src/web/oidc.js): ADMIN_AUTH_MODE=oidc = OpenID Connect auth-code flow + PKCE,
+  handled by the app (no deps): discovery + JWKS cached, ID token RS256/iss/aud/exp/nonce checked, session = HMAC-signed
+  cookie csat_session (SESSION_SECRET, SESSION_HOURS). login = preferred_username/upn/email → ADMIN_EMAILS or app role
+  OIDC_ADMIN_ROLE (CSAT.GlobalAdmin) = global admin, else team admin via HDA. Routes /auth/login, /auth/callback,
+  /auth/logout, /auth/signed-out. Fake provider for testing: npm run mock:oidc (:4020). Tests: test/oidc.test.js.
 - Email via Microsoft Graph or SMTP (MAIL_TRANSPORT=graph|smtp|file). Optional Outlook Actionable Messages.
 
 ## Layout
@@ -81,6 +86,10 @@ Dependencies are only `pg` and `nodemailer`; the web layer is plain `node:http` 
 - Group membership (HDA Groups/Operators page): entity `UserGroupAssignment` (UserID → User, UserGroupID → UserGroup);
   ~16k rows, many users in several groups. Filter by `User.Username` or `UserID`; `User.USERUPN` maps to the Entra UPN.
   UserGroup also has `TeamManagerUserID` and `EMail` (group mailbox). User.PLUS04 holds only one group – don't use it.
+- Sign-in token (LoginEx): JWT valid 60 min, expiresIn 3300 s; the client reuses it until 1 min before that, then signs
+  in again (refresh token needs an API key, so login mode re-logs in ~26×/day). If HDA rejects the credentials the client
+  sets authBlocked and makes no further attempts (AD lockout protection) until "Try again" (/admin/hda/retry) or a
+  restart; network errors / the off-VPN 404 don't block. Tested in test/hda-auth.test.js.
 - Only reachable on the corporate network/VPN (internal DNS → 10.9.x.x); off VPN the host returns IIS 404s.
 - HDAConnect only CREATES incidents; it has no read endpoints. Option for later: add GET closed-tickets and
   GET owner-groups endpoints to HDAConnect and point CSAT Pulse at it.

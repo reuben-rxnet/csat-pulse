@@ -395,3 +395,6 @@ a.dchip:hover{filter:brightness(.96)}
 .senti-i.good b{color:var(--good)}.senti-i.mid b{color:var(--muted)}.senti-i.bad b{color:var(--bad)}
 .dcard #dist{display:flex;flex-direction:column;justify-content:center}
 table.tech td{vertical-align:top}table.tech td:first-child{white-space:nowrap}
+.authbar{background:linear-gradient(90deg,var(--bad-soft),#fff1f0);color:var(--fg);border-bottom:1px solid rgba(209,69,62,.25)}
+.authbar .viewas-in b{color:var(--bad)}.authbar .btn{background:var(--bad)}.authbar .btn:hover{background:#b8322c}
+.who a.signout{color:inherit;opacity:.85;text-decoration:underline;text-underline-offset:2px}.who a.signout:hover{opacity:1}

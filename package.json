@@ -14,7 +14,8 @@
     "hda:discover": "node scripts/hda-discover.js",
     "mock:hda": "node mock/hda-mock-server.js",
     "seed:demo": "node scripts/seed-demo.js",
-    "test": "node --test"
+    "test": "node --test",
+    "mock:oidc": "node mock/oidc-mock-server.js"
   },
   "dependencies": {
     "nodemailer": "^10.0.16",
