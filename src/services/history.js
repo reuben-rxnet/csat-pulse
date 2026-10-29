@@ -46,6 +46,16 @@ function describe(e, groupName = id => id) {
     case 'report.schedule_run': return `Sent the scheduled report "${d.name}" now`;
     case 'hda.retry': return d.ok ? 'Signed in to HDA again after it was paused' : 'Tried to sign in to HDA again (still failing)';
     case 'auth.sign_in': return `Signed in${d.name ? ` (${d.name})` : ''}`;
+    case 'report.survey_send': return `Emailed the results of "${d.title}" to ${(d.to || []).join(', ')}${d.names ? ' (with names)' : ''}`;
+    case 'form.report_on_close': return d.enabled ? `Set the results of "${d.title}" to be emailed to ${(d.to || []).join(', ')} when it closes` : `Switched off the automatic results email for "${d.title}"`;
+    case 'form.create': return `Created the stakeholder survey "${d.title || ''}"`;
+    case 'form.invite': return `Sent ${d.sent} invitation${d.sent === 1 ? '' : 's'} for "${d.title}"${d.failed ? ` (${d.failed} failed)` : ''}`;
+    case 'form.test': return `Sent a test of "${d.title}" to ${d.to}`;
+    case 'form.remind': return `Sent ${d.sent} reminder${d.sent === 1 ? '' : 's'} for "${d.title}"`;
+    case 'form.recipients_add': return `Added ${d.added} recipient${d.added === 1 ? '' : 's'} to "${d.title}"`;
+    case 'form.status': return `${d.status === 'closed' ? 'Closed' : 'Reopened'} the stakeholder survey "${d.title}"`;
+    case 'form.duplicate': return `Copied "${d.title}" into a new survey`;
+    case 'form.delete': return `Deleted the stakeholder survey "${d.title}"`;
     case 'followup.update': return `Marked the low-score follow-up for ${ticket} as ${d.status}`;
     default: return e.action;
   }

@@ -27,6 +27,7 @@ function layout({ title, body, admin, active, scripts = [], help = '' }) {
   const nav = admin ? `<nav aria-label="Admin">
       <a href="/admin" ${active === 'dash' ? 'aria-current="page"' : ''}>Dashboard</a>
       <a href="/admin/settings" ${active === 'settings' ? 'aria-current="page"' : ''}>${isTeam(admin) ? 'My groups' : 'Admin settings'}</a>
+      <a href="/admin/forms" ${active === 'forms' ? 'aria-current="page"' : ''}>Stakeholder surveys</a>
       <a href="/admin/reports" ${active === 'reports' ? 'aria-current="page"' : ''}>Reports</a>
       <a href="/admin/surveys" ${active === 'surveys' ? 'aria-current="page"' : ''}>Survey log</a>
       <a href="/admin/missing" ${active === 'missing' ? 'aria-current="page"' : ''}>Missing emails</a>
@@ -388,7 +389,8 @@ function testPage(admin, { ticket, to, sent, error, mail }) {
   const body = `<section class="panel">
   <div><div class="eyebrow">Admin</div><h1>Test survey</h1>
     <p class="lead">Preview the survey email, then send a working test to any address. Test surveys are marked "test" in the Survey log
-      and are left out of the dashboard, so they don't change the KPIs.</p></div>
+      and are left out of the dashboard, so they don't change the KPIs.</p>
+    <p class="small muted">Testing a stakeholder survey? Open it under <a href="/admin/forms">Stakeholder surveys</a> and use <b>Preview</b> or <b>Send a test to me</b> on its Send page.</p></div>
   ${sent ? `<p class="ok" role="status">Test survey for ${esc(sent.ticket)} sent to ${esc(sent.to)}.</p>` : ''}
   ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ''}
   <div class="grid g2">
@@ -437,7 +439,7 @@ function sectionPicker(prefix, sections, SECTIONS, custom) {
     <p class="small muted">The main figures (CSAT %, average score, response rate, surveys sent, low scores, time to respond) are always included.</p></fieldset>`;
 }
 
-function reportsPage(admin, { groups, schedules, runs, edit, R, domains, defaults, notice, error }) {
+function reportsPage(admin, { groups, schedules, runs, edit, R, domains, defaults, notice, error, kind = 'ticket', surveys = [], surveyId = null }) {
   const team = isTeam(admin);
   const gname = new Map(groups.map(g => [g.id, g.name || g.id]));
   const groupText = gs => !gs ? 'All owner groups' : gs.length > 3 ? `${gs.slice(0, 3).map(g => gname.get(g) || g).join(', ')} +${gs.length - 3}` : gs.map(g => gname.get(g) || g).join(', ');
@@ -499,21 +501,44 @@ function reportsPage(admin, { groups, schedules, runs, edit, R, domains, default
     <div class="inline"><button class="btn" type="submit">${edit ? 'Save changes' : 'Create scheduled report'}</button>${edit ? '<a class="btn ghost" href="/admin/reports#schedule">Cancel</a>' : ''}</div>
   </form>`;
 
-  const kinds = { download: 'Downloaded', send: 'Emailed', scheduled: 'Scheduled email' };
+  const kinds = { download: 'Downloaded', send: 'Emailed', scheduled: 'Scheduled email', on_close: 'Emailed when the survey closed' };
   const history = `<div class="card"><div class="ch"><h3>Recent reports</h3><span class="small muted">Last 30${team ? ', yours' : ''}</span></div>
     <div class="tw"><table><thead><tr><th>When</th><th>What</th><th>Period</th><th>Owner groups</th><th>Recipients</th><th>By</th><th>Result</th></tr></thead><tbody>
-    ${runs.map(r => `<tr><td class="small" style="white-space:nowrap">${fmtDateTime(r.at)}</td><td class="small">${kinds[r.kind] || esc(r.kind)}${r.schedule_name ? `<div class="muted">${esc(r.schedule_name)}</div>` : ''}${R.isCustom(r.sections || []) ? ' <span class="pill neutral">custom</span>' : ''}</td>
-      <td class="small">${esc(R.periodLabel(new Date(r.period_from), new Date(r.period_to)))}</td><td class="small">${esc(groupText(r.groups))}</td>
+    ${runs.map(r => `<tr><td class="small" style="white-space:nowrap">${fmtDateTime(r.at)}</td>${r.form_id || r.form_title
+      ? `<td class="small">${kinds[r.kind] || esc(r.kind)}<div class="muted">Stakeholder survey</div>${(r.sections || []).includes('names') ? ' <span class="pill warn">with names</span>' : ''}${(r.sections || []).includes('excel') ? ' <span class="pill neutral">+ Excel</span>' : ''}</td>
+      <td class="small" colspan="2">${r.form_id ? `<a href="/admin/forms/${r.form_id}/results">${esc(r.form_title || 'Survey')}</a>` : esc(r.form_title || 'Survey (deleted)')}</td>`
+      : `<td class="small">${kinds[r.kind] || esc(r.kind)}${r.schedule_name ? `<div class="muted">${esc(r.schedule_name)}</div>` : ''}${R.isCustom(r.sections || []) ? ' <span class="pill neutral">custom</span>' : ''}</td>
+      <td class="small">${esc(R.periodLabel(new Date(r.period_from), new Date(r.period_to)))}</td><td class="small">${esc(groupText(r.groups))}</td>`}
       <td class="small">${(r.recipients || []).map(esc).join('<br>') || '<span class="muted">–</span>'}</td><td class="small">${esc(r.actor)}</td>
       <td class="small">${r.status === 'ok' ? '<span class="pill good">ok</span>' : `<span class="pill bad">failed</span><div class="err">${esc(clip(r.error || '', 140))}</div>`}</td></tr>`).join('')
       || '<tr><td colspan="7" class="muted">No reports yet.</td></tr>'}</tbody></table></div></div>`;
 
+  const kindTabs = `<div class="seg tabs" role="tablist" aria-label="Report type">
+    <a role="tab" class="tab" href="/admin/reports" aria-selected="${kind !== 'survey'}">Ticket CSAT</a>
+    <a role="tab" class="tab" href="/admin/reports?kind=survey" aria-selected="${kind === 'survey'}">Stakeholder survey</a></div>`;
+  const picked = surveys.find(f => String(f.id) === String(surveyId)) || surveys[0];
+  const surveyCard = `<form class="card rules" method="post" action="/admin/reports/survey/send" id="survey-report">
+    <div class="ch"><h3>Stakeholder survey results</h3><span class="small muted">Download the PDF, or email it with the main figures and charts in the email</span></div>
+    ${surveys.length ? `<div class="field"><label for="sr-form">Survey</label><select id="sr-form" name="form">${surveys.map(f => `<option value="${f.id}" ${picked && f.id === picked.id ? 'selected' : ''}>${esc(f.title)} – ${f.status === 'closed' ? 'closed' : f.status === 'open' ? 'open' : 'draft'}, ${f.responses} of ${f.invited} answered</option>`).join('')}</select>
+      <p class="small muted">Every survey is listed, so earlier quarters' results can be sent again too.${team ? ' You see the surveys you created.' : ''}</p></div>
+    <label class="chk"><input type="checkbox" name="names" value="true"> Include respondent names <span class="small muted">– off by default: comments and the Excel file then have no names or emails</span></label>
+    <label class="chk"><input type="checkbox" name="excel" value="true"> Attach the answers as an Excel file <span class="small muted">– the PDF is always attached</span></label>
+    <div class="inline"><button class="btn" type="submit" formaction="/admin/reports/survey.pdf" formmethod="get">Download PDF</button>${picked ? `<a class="small" href="/admin/forms/${picked.id}/results">Open its results page</a>` : ''}</div>
+    <hr class="sep">
+    <div class="field"><label for="sr-to">Email it to</label><textarea id="sr-to" name="to_emails" rows="2" placeholder="name@essilor.com, name2@luxottica.com"></textarea>${recipientHelp}</div>
+    <div class="field"><label for="sr-msg">Message <span class="muted">(optional, shown above the figures)</span></label>
+      <textarea id="sr-msg" name="message" rows="2" maxlength="1000" placeholder="e.g. Here are the results of our quarterly stakeholder survey."></textarea></div>
+    <button class="btn ghost" type="submit" data-needs-recipients>Send report now</button>`
+    : '<p class="muted">No stakeholder surveys yet. Create one under <a href="/admin/forms">Stakeholder surveys</a>.</p>'}
+  </form>
+  <p class="small muted">To send the results automatically when a survey closes, open the survey's <b>Send</b> page. It is off unless you switch it on, so extending a survey never sends anything early.</p>`;
   const body = `<section class="panel"><div><div class="eyebrow">${team ? 'Team admin' : 'Admin'}</div><h1>Reports</h1>
-    <p class="lead">PDF reports of the CSAT figures for stakeholders${team ? ', for your owner groups' : ''}. They use the same numbers as the dashboard.
-      Standard reports leave out agent names; choose <b>Custom report</b> to add ticket owners.</p></div>
+    <p class="lead">${kind === 'survey' ? 'PDF results of a stakeholder survey, with the main figures and charts in the email body. Respondents are not named unless you tick it.'
+      : `PDF reports of the CSAT figures for stakeholders${team ? ', for your owner groups' : ''}. They use the same numbers as the dashboard. Standard reports leave out agent names; choose <b>Custom report</b> to add ticket owners.`}</p></div>
     ${notice ? `<p class="ok" role="status">${esc(notice)}</p>` : ''}${error ? `<p class="err" role="alert">${esc(error)}</p>` : ''}
-    ${adhoc}
-    <div class="card"><div class="ch"><h3>Scheduled reports</h3><span class="small muted">Emailed automatically with the PDF attached</span></div>${list}${scheduleForm}</div>
+    ${kindTabs}
+    ${kind === 'survey' ? surveyCard : `${adhoc}
+    <div class="card"><div class="ch"><h3>Scheduled reports</h3><span class="small muted">Emailed automatically with the PDF attached</span></div>${list}${scheduleForm}</div>`}
     ${history}</section>`;
   return layout({ title: 'Reports', body, admin, active: 'reports', scripts: ['/assets/reports.js'], help: 'report-download' });
 }

@@ -21,6 +21,9 @@ const { listMissing, countMissing, findMissing, fixAndSend, dismiss, contactsToF
 const reportsSvc = require('./services/reports');
 const R = require('./report/schedule');
 const help = require('./web/help');
+const forms = require('./services/forms');
+const formModel = require('./forms/model');
+const formViews = require('./web/forms-views');
 const { hda: hdaClient } = require('./hda/client');
 const scheduler = require('./scheduler');
 
@@ -389,6 +392,163 @@ router.get('/admin/help', requireAdmin, async (req, res, ctx) => {
   html(res, help.helpPage(ctx.admin, { settings, defaultSources: sources.rows.map(r => r.source), layout: views.layout, forId: String(ctx.query.get('for') || '') }));
 });
 
+// ---------- stakeholder surveys (forms) ----------
+const formOr404 = async (req, res, ctx) => {
+  const f = await forms.getForm(ctx.admin, ctx.params.id);
+  if (!f) { html(res, views.messagePage('Survey not found', 'This survey does not exist, or it belongs to someone else.'), 404); return false; }
+  ctx.form = f;
+};
+const formsBack = (res, id, page, q) => redirect(res, `/admin/forms/${id}${page ? '/' + page : ''}?` + new URLSearchParams(q));
+const formAudit = (ctx, action, detail = {}) => audit(ctx.actor, action, { form: ctx.form ? ctx.form.id : detail.form, title: ctx.form ? ctx.form.title : detail.title, ...detail });
+
+router.get('/admin/forms', requireAdmin, async (req, res, ctx) => {
+  html(res, formViews.listPage(ctx.admin, { forms: await forms.listForms(ctx.admin), notice: ctx.query.get('notice'), error: ctx.query.get('error') }));
+});
+router.post('/admin/forms', requireAdmin, async (req, res, ctx) => {
+  const b = await readBody(req);
+  const id = await forms.createForm(ctx.admin, { template: b.template, period: b.period }, ctx.actor);
+  await formAudit(ctx, 'form.create', { form: id, template: b.template });
+  redirect(res, `/admin/forms/${id}`);
+});
+router.get('/admin/forms/:id', requireAdmin, formOr404, async (req, res, ctx) => {
+  const responses = (await db.query('SELECT count(*)::int c FROM form_responses WHERE form_id = $1 AND submitted_at IS NOT NULL', [ctx.form.id])).rows[0].c;
+  html(res, formViews.editPage(ctx.admin, { form: ctx.form, responses, notice: ctx.query.get('notice'), error: ctx.query.get('error') }));
+});
+// Autosave from the builder (JSON). Returns the cleaned questions so the builder keeps the same ids.
+router.post('/admin/forms/:id/save', requireAdmin, formOr404, async (req, res, ctx) => {
+  const b = await readBody(req, 3 * 1024 * 1024);
+  try { const r = await forms.saveForm(ctx.form, b, ctx.actor); json(res, { ok: true, questions: r.questions, savedAt: new Date().toISOString() }); }
+  catch (e) { json(res, { ok: false, error: e.message }, e.status || 500); }
+});
+router.get('/admin/forms/:id/preview', requireAdmin, formOr404, (req, res, ctx) => html(res, formViews.fillPage({ form: ctx.form, recipient: null, preview: true })));
+router.get('/admin/forms/:id/send', requireAdmin, formOr404, async (req, res, ctx) => {
+  html(res, formViews.sendPage(ctx.admin, { form: ctx.form, recipients: await forms.recipientsOf(ctx.form.id), domains: config.forms.recipientDomains,
+    testTo: /@/.test(ctx.admin.login || '') ? ctx.admin.login : (config.admin.allowedEmails[0] || config.support.email || ''),
+    notice: ctx.query.get('notice'), error: ctx.query.get('error') }));
+});
+router.post('/admin/forms/:id/recipients', requireAdmin, formOr404, async (req, res, ctx) => {
+  const r = await forms.addRecipients(ctx.form, (await readBody(req, 256 * 1024)).people, ctx.actor);
+  if (r.added) await formAudit(ctx, 'form.recipients_add', { added: r.added });
+  const problems = [r.invalid.length ? `not an email address: ${r.invalid.slice(0, 5).join(', ')}` : '', r.blocked.length ? `not an internal address: ${r.blocked.slice(0, 5).join(', ')}` : ''].filter(Boolean).join('; ');
+  formsBack(res, ctx.form.id, 'send', { ...(r.added || r.skipped ? { notice: `${r.added} added${r.skipped ? `, ${r.skipped} already on the list` : ''}.` } : {}), ...(problems ? { error: `Not added – ${problems}.` } : {}),
+    ...(!r.added && !r.skipped && !problems ? { error: 'Type at least one email address.' } : {}) });
+});
+router.post('/admin/forms/:id/recipients/:rid/remove', requireAdmin, formOr404, async (req, res, ctx) => {
+  const r = await forms.removeRecipient(ctx.form.id, parseInt(ctx.params.rid, 10) || 0);
+  formsBack(res, ctx.form.id, 'send', r.rowCount ? { notice: 'Removed from the survey.' } : { error: 'People who already answered can’t be removed.' });
+});
+router.post('/admin/forms/:id/settings', requireAdmin, formOr404, async (req, res, ctx) => {
+  const b = await readBody(req, 64 * 1024);
+  const f = ctx.form;
+  await forms.saveForm(f, { title: f.title, description: f.description, questions: f.questions, coverImage: 'keep', closesAt: b.closesAt || null,
+    settings: { ...f.settings, inviteSubject: b.inviteSubject, inviteMessage: b.inviteMessage, reminderDays: b.reminderDays, maxReminders: b.maxReminders, allowEdit: b.allowEdit === 'true', thankYou: b.thankYou } }, ctx.actor);
+  formsBack(res, f.id, 'send', { notice: 'Invitation and timing saved.' });
+});
+router.get('/admin/forms/:id/invite-preview', requireAdmin, formOr404, async (req, res, ctx) => {
+  // A real recipient's greeting, but never their personal link (anyone clicking it would answer as them).
+  const first = { ...((await forms.recipientsOf(ctx.form.id)).find(r => !r.is_test) || { first_name: 'Phawinee' }), token: 'preview-only-link' };
+  const frame = { 'Content-Security-Policy': "default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'" };
+  html(res, forms.inviteEmail(ctx.form, first).html.replace(/<a href="[^"]*\/f\/[^"]*"/g, '<a href="#" title="Link disabled in the preview"'), 200, frame);
+});
+router.post('/admin/forms/:id/invite', requireAdmin, formOr404, async (req, res, ctx) => {
+  try {
+    const r = await forms.sendInvites(ctx.form, ctx.actor);
+    await formAudit(ctx, 'form.invite', r);
+    formsBack(res, ctx.form.id, 'send', r.failed ? { error: `${r.sent} invitation${r.sent === 1 ? '' : 's'} sent, ${r.failed} could not be delivered (see the list).` } : { notice: `${r.sent} personal invitation${r.sent === 1 ? '' : 's'} sent. The survey is open.` });
+  } catch (e) { formsBack(res, ctx.form.id, 'send', { error: e.message }); }
+});
+router.post('/admin/forms/:id/report-on-close', requireAdmin, formOr404, async (req, res, ctx) => {
+  const b = await readBody(req, 64 * 1024);
+  const enabled = b.enabled === 'true';
+  const to = String(b.to_emails || '').trim() ? reportsSvc.recipients(b.to_emails) : { emails: [], error: enabled ? 'Enter who should receive the results.' : null };
+  if (to.error) return formsBack(res, ctx.form.id, 'send', { error: `Results report not saved: ${to.error}` });
+  const f = ctx.form;
+  await forms.saveForm(f, { title: f.title, description: f.description, questions: f.questions, coverImage: 'keep', closesAt: f.closes_at,
+    settings: { ...f.settings, reportOnClose: { enabled, recipients: to.emails, names: b.names === 'true', excel: b.excel === 'true' } } }, ctx.actor);
+  await formAudit(ctx, 'form.report_on_close', { enabled, to: to.emails });
+  formsBack(res, f.id, 'send', { notice: enabled ? `The results will be emailed to ${to.emails.join(', ')} when the survey closes.` : 'Automatic results email switched off.' });
+});
+router.post('/admin/forms/:id/test', requireAdmin, formOr404, async (req, res, ctx) => {
+  try {
+    const r = await forms.sendTest(ctx.form, String((await readBody(req)).to || ''), ctx.actor);
+    await formAudit(ctx, 'form.test', { to: r.to });
+    formsBack(res, ctx.form.id, 'send', { notice: `Test invitation sent to ${r.to}. Test answers are marked "Test" and left out of the results.` });
+  } catch (e) { formsBack(res, ctx.form.id, 'send', { error: `Test not sent: ${e.message}` }); }
+});
+router.post('/admin/forms/:id/tests/clear', requireAdmin, formOr404, async (req, res, ctx) => {
+  const r = await forms.clearTests(ctx.form.id);
+  formsBack(res, ctx.form.id, 'send', { notice: `${r.rowCount} test recipient${r.rowCount === 1 ? '' : 's'} and their answers removed.` });
+});
+router.post('/admin/forms/:id/remind', requireAdmin, formOr404, async (req, res, ctx) => {
+  const r = await forms.sendReminders(ctx.form);
+  await formAudit(ctx, 'form.remind', r);
+  formsBack(res, ctx.form.id, 'send', { notice: `${r.sent} reminder${r.sent === 1 ? '' : 's'} sent${r.failed ? `, ${r.failed} failed` : ''}.` });
+});
+router.post('/admin/forms/:id/status', requireAdmin, formOr404, async (req, res, ctx) => {
+  const status = (await readBody(req)).status === 'closed' ? 'closed' : 'open';
+  if (status === 'open' && ctx.form.closes_at && new Date(ctx.form.closes_at) <= new Date()) return formsBack(res, ctx.form.id, 'send', { error: 'The close date has passed. Set a later close date first.' });
+  await forms.setStatus(ctx.form.id, status, ctx.actor);
+  await formAudit(ctx, 'form.status', { status });
+  const sent = status === 'closed' ? await reportsSvc.sendResultsOnClose(ctx.form.id) : { sent: false };
+  formsBack(res, ctx.form.id, 'send', sent.error ? { notice: 'Survey closed. Nobody can answer now.', error: `The results could not be emailed: ${sent.error}` }
+    : { notice: status === 'closed' ? `Survey closed. Nobody can answer now.${sent.sent ? ' The results report has been emailed.' : ''}` : 'Survey reopened.' });
+});
+router.post('/admin/forms/:id/duplicate', requireAdmin, formOr404, async (req, res, ctx) => {
+  const id = await forms.duplicateForm(ctx.admin, ctx.form, ctx.actor);
+  await formAudit(ctx, 'form.duplicate', { copy: id });
+  formsBack(res, id, '', { notice: `Copied from "${ctx.form.title}" with the same questions and recipients. Check the title, then send it.` });
+});
+router.post('/admin/forms/:id/delete', requireAdmin, formOr404, async (req, res, ctx) => {
+  await forms.deleteForm(ctx.form.id);
+  await formAudit(ctx, 'form.delete');
+  redirect(res, '/admin/forms?' + new URLSearchParams({ notice: `"${ctx.form.title}" deleted.` }));
+});
+router.get('/admin/forms/:id/results', requireAdmin, formOr404, async (req, res, ctx) => {
+  // Rounds made with Duplicate: the survey this was copied from, and the copy made from it (only those this person may open).
+  const prev = ctx.form.copied_from ? await forms.getForm(ctx.admin, ctx.form.copied_from) : null;
+  const nextRow = (await db.query('SELECT id FROM forms WHERE copied_from = $1 ORDER BY created_at LIMIT 1', [ctx.form.id])).rows[0];
+  const next = nextRow ? await forms.getForm(ctx.admin, nextRow.id) : null;
+  html(res, formViews.resultsPage(ctx.admin, { form: ctx.form, res: await forms.results(ctx.form), prev, next }));
+});
+router.get('/admin/forms/:id/responses/:rid', requireAdmin, formOr404, async (req, res, ctx) => {
+  const all = (await forms.results(ctx.form)).responses;
+  const i = all.findIndex(r => String(r.id) === ctx.params.rid);
+  if (i < 0) return html(res, views.messagePage('Response not found', 'This response does not exist or has not been submitted.'), 404);
+  html(res, formViews.responsePage(ctx.admin, { form: ctx.form, response: all[i], prev: all[i - 1] && all[i - 1].id, next: all[i + 1] && all[i + 1].id, index: i + 1, total: all.length }));
+});
+router.get('/admin/forms/:id/export.csv', requireAdmin, formOr404, async (req, res, ctx) => {
+  const name = ctx.form.title.replace(/[^\w\- ()]+/g, '').trim().replace(/\s+/g, '-').slice(0, 80) || 'survey';
+  send(res, 200, await forms.exportCsv(ctx.form), 'text/csv; charset=utf-8', { 'Content-Disposition': `attachment; filename="${name}-responses.csv"` });
+});
+
+// Public: the personal survey link.
+router.get('/f/:token', async (req, res, ctx) => {
+  const c = await forms.findByToken(ctx.params.token);
+  if (!c) return html(res, views.messagePage('Link not valid', 'This survey link is not valid. Please use the link from your invitation email.'), 404);
+  if (c.form.status === 'draft' && !c.recipient.is_test) return html(res, formViews.closedPage(c.form));
+  await forms.markOpened(c.recipient);
+  const submitted = c.response && c.response.submitted_at;
+  if (submitted && !(ctx.query.get('edit') === '1' && forms.canAnswer(c))) return html(res, formViews.thanksPage(c.form, { canEdit: forms.canAnswer(c), token: c.recipient.token, isTest: c.recipient.is_test }));
+  if (!forms.canAnswer({ ...c, response: null })) return html(res, formViews.closedPage(c.form));
+  html(res, formViews.fillPage({ form: c.form, recipient: c.recipient, answers: (c.response && c.response.answers) || {}, editing: !!submitted }));
+});
+router.post('/f/:token/save', async (req, res, ctx) => {
+  const c = await forms.findByToken(ctx.params.token);
+  if (!c) return json(res, { ok: false, error: 'not_found' }, 404);
+  const b = await readBody(req, 256 * 1024, true);
+  json(res, await forms.saveDraft(c, formModel.formToAnswers(c.form.questions, b), { elapsed: b._elapsed }));
+});
+router.post('/f/:token', async (req, res, ctx) => {
+  const c = await forms.findByToken(ctx.params.token);
+  if (!c) return html(res, views.messagePage('Link not valid', 'This survey link is not valid. Please use the link from your invitation email.'), 404);
+  const b = await readBody(req, 256 * 1024, true);
+  const r = await forms.submit(c, formModel.formToAnswers(c.form.questions, b), { elapsed: b._elapsed });
+  if (r.ok) return html(res, formViews.thanksPage(c.form, { canEdit: forms.canAnswer({ ...c, response: { submitted_at: new Date() } }), token: c.recipient.token, isTest: c.recipient.is_test }));
+  if (r.error === 'invalid') return html(res, formViews.fillPage({ form: c.form, recipient: c.recipient, answers: r.answers, errors: r.errors, editing: !!(c.response && c.response.submitted_at) }), 400);
+  if (r.error === 'already') return html(res, formViews.thanksPage(c.form, { canEdit: false, token: c.recipient.token }));
+  html(res, formViews.closedPage(c.form));
+});
+
 // ---------- reports ----------
 // Reads the report fields shared by the forms (body object or URLSearchParams): groups, sections and, for ad hoc reports, the dates.
 function reportForm(admin, src) {
@@ -407,9 +567,39 @@ router.get('/admin/reports', requireAdmin, async (req, res, ctx) => {
   // A schedule may list a group that has no surveys yet; keep it pickable while editing.
   const groups = [...options.groups];
   for (const id of (edit && edit.groups) || []) if (!groups.some(g => g.id === id)) groups.push({ id, name: id });
+  const kind = ctx.query.get('kind') === 'survey' ? 'survey' : 'ticket';
+  const surveys = kind === 'survey' ? await forms.listForms(ctx.admin) : [];
   html(res, views.reportsPage(ctx.admin, { groups, schedules, runs, edit, R, domains: config.reports.recipientDomains,
     defaults: { from: views.ymd(lastMonth.from), to: views.ymd(new Date(lastMonth.to.getTime() - 864e5)) },
-    notice: ctx.query.get('notice'), error: ctx.query.get('error') }));
+    notice: ctx.query.get('notice'), error: ctx.query.get('error'), kind, surveys, surveyId: ctx.query.get('form') }));
+});
+
+// ---------- stakeholder survey reports ----------
+const surveyBack = (res, q) => redirect(res, '/admin/reports?' + new URLSearchParams({ kind: 'survey', ...q }));
+router.get('/admin/reports/survey.pdf', requireAdmin, async (req, res, ctx) => {
+  const form = await forms.getForm(ctx.admin, ctx.query.get('form'));
+  if (!form) return surveyBack(res, { error: 'Choose one of your surveys.' });
+  const includeNames = ctx.query.get('names') === 'true';
+  const r = await reportsSvc.buildSurveyReport(form, { includeNames, producedBy: ctx.actor });
+  await reportsSvc.logRun({ kind: 'download', actor: ctx.actor, owner: reportsSvc.ownerOf(ctx.admin), period: { from: form.opened_at || form.created_at, to: form.closed_at || new Date() },
+    sections: ['survey', ...(includeNames ? ['names'] : [])], formId: form.id, title: form.title, status: 'ok' });
+  send(res, 200, r.pdf, 'application/pdf', { 'Content-Disposition': `attachment; filename="${r.filename}"` });
+});
+router.post('/admin/reports/survey/send', requireAdmin, async (req, res, ctx) => {
+  const b = await readBody(req, 64 * 1024);
+  const form = await forms.getForm(ctx.admin, b.form);
+  if (!form) return surveyBack(res, { error: 'Choose one of your surveys.' });
+  const to = reportsSvc.recipients(b.to_emails);
+  if (to.error) return surveyBack(res, { form: form.id, error: to.error });
+  try {
+    await reportsSvc.sendSurveyReport({ form, to: to.emails, includeNames: b.names === 'true', excel: b.excel === 'true', message: String(b.message || '').trim().slice(0, 1000),
+      actor: ctx.actor, owner: reportsSvc.ownerOf(ctx.admin) });
+    await audit(ctx.actor, 'report.survey_send', { form: form.id, title: form.title, to: to.emails, names: b.names === 'true', excel: b.excel === 'true' });
+    surveyBack(res, { form: form.id, notice: `Results of "${form.title}" sent to ${to.emails.join(', ')}.` });
+  } catch (e) {
+    console.error('[reports] survey report failed:', e.message);
+    surveyBack(res, { form: form.id, error: `Sending the results failed: ${e.message}` });
+  }
 });
 
 router.get('/admin/reports/pdf', requireAdmin, async (req, res, ctx) => {

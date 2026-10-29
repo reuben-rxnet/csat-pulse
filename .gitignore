@@ -3,3 +3,6 @@ node_modules/
 outbox/
 discover/
 *.log
+
+# Reference material with real stakeholder names, emails and answers – stays on this computer
+design reference/

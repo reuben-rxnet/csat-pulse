@@ -8,6 +8,9 @@ const { getSettings } = require('./settings');
 const { sendMail } = require('../mail/transport');
 const { esc } = require('../mail/templates');
 const { renderReportPdf } = require('../report/layout');
+const { renderSurveyPdf } = require('../report/survey-layout');
+const mailKit = require('../mail/report-email');
+const formsSvc = require('./forms');
 const { SECTION_KEYS, isCustom, periodFor, nextRunAt, parseRecipients, periodLabel } = require('../report/schedule');
 
 const MAX_GROUPS_IN_LABEL = 8;
@@ -48,40 +51,112 @@ async function buildReport({ period, groups, sections, producedBy, title }) {
   const target = (settings.csatTarget || 85) / 100;
   const pdf = renderReportPdf({ m, period, sections: secs, target, groupsLabel: label, producedBy, followups, custom: isCustom(secs), title });
   const last = new Date(period.to.getTime() - 1);
-  return { pdf, filename: `CSAT-report_${fileDate(period.from)}_to_${fileDate(last)}.pdf`, label, kpis: m.kpis, prev: m.prev, target };
+  return { pdf, filename: `CSAT-report_${fileDate(period.from)}_to_${fileDate(last)}.pdf`, label, kpis: m.kpis, prev: m.prev, target, m };
 }
 
-const pct = v => (v == null || !isFinite(v) ? '–' : (v * 100).toFixed(1) + '%');
-// Short Outlook-friendly email with the main figures; the full report is the attached PDF.
-function reportEmail({ title, period, label, kpis, target, message, producedBy, scheduleName }) {
-  const NAVY = '#0b1f3f', MUTED = '#5b6780', LINE = '#dfe4ee', BG = '#f5f7fb';
-  const b = config.brand;
-  const cell = (k, v) => `<td style="padding:10px 12px;background:${BG};border-radius:6px;width:33%;vertical-align:top">
-      <div style="font:700 11px Segoe UI,Arial,sans-serif;color:${MUTED};text-transform:uppercase">${esc(k)}</div>
-      <div style="font:700 20px Segoe UI,Arial,sans-serif;color:#14213a;margin-top:2px">${esc(v)}</div></td>`;
-  const html = `<!doctype html><html><body style="margin:0;background:${BG}">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BG}"><tr><td align="center" style="padding:24px 12px">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border:1px solid ${LINE};border-radius:10px">
-<tr><td style="background:${NAVY};padding:20px 24px;border-radius:10px 10px 0 0">
-  <span style="font:800 17px Segoe UI,Arial,sans-serif;color:#ffffff">${esc(b.company)} <span style="font-weight:400;opacity:.85">${esc(b.unit)}</span></span>
-  <div style="font:700 19px Segoe UI,Arial,sans-serif;color:#ffffff;margin-top:10px">${esc(scheduleName || title)}</div>
-  <div style="font:13px Segoe UI,Arial,sans-serif;color:#ffffff;opacity:.8;margin-top:4px">${esc(periodLabel(period.from, period.to))}</div></td></tr>
-<tr><td style="padding:20px 24px;font:14px Segoe UI,Arial,sans-serif;color:#14213a">
-  ${message ? `<p style="margin:0 0 14px">${esc(message).replace(/\n/g, '<br>')}</p>` : ''}
-  <p style="margin:0 0 14px;color:${MUTED}">Owner groups: ${esc(label)}</p>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="6"><tr>${cell('CSAT %', pct(kpis.csat))}${cell('Average score', kpis.avg == null ? '–' : kpis.avg.toFixed(2) + ' / 5')}${cell('Response rate', pct(kpis.rate))}</tr>
-    <tr>${cell('Surveys sent', String(kpis.sent))}${cell('Responses', String(kpis.n))}${cell('Low scores (1–2)', String(kpis.det))}</tr></table>
-  <p style="margin:14px 0 0">CSAT target: ${Math.round(target * 100)}%. The full report is attached as a PDF.</p>
-  <p style="margin:14px 0 0;font-size:12px;color:${MUTED}">${scheduleName ? 'Scheduled report' : 'Sent'} from ${esc(b.product)} by ${esc(producedBy)}. For internal use only – please don't forward outside the company.</p>
-</td></tr></table></td></tr></table></body></html>`;
-  const text = `${scheduleName || title} – ${periodLabel(period.from, period.to)}\nOwner groups: ${label}\nCSAT ${pct(kpis.csat)} · average ${kpis.avg == null ? '–' : kpis.avg.toFixed(2)} · response rate ${pct(kpis.rate)} · ${kpis.sent} surveys sent · ${kpis.det} low scores\nThe full report is attached as a PDF.`;
+const footer = (who, scheduled) => `${scheduled ? 'Scheduled report' : 'Sent'} from ${esc(config.brand.product)} by ${esc(who)}. The full report is attached as a PDF.
+  For internal use only – please don't forward outside the company.`;
+const hours = h => (h == null ? '–' : h < 1 ? `${Math.round(h * 60)} min` : h < 48 ? `${h.toFixed(1)} h` : `${(h / 24).toFixed(1)} days`);
+// Ticket CSAT report email: KPI tiles, the weekly trend, the score spread and CSAT by owner group – all in the body.
+function reportEmail({ title, period, label, m, target, message, producedBy, scheduleName }) {
+  const k = m.kpis, p = m.prev, E = mailKit;
+  const d = (a, b, o) => E.delta(a, b, o);
+  const csatTone = k.csat == null ? undefined : k.csat >= target ? 'good' : k.csat >= target - 0.1 ? 'warn' : 'bad';
+  const t1 = d(k.csat, p.csat, { isPct: true }), t2 = d(k.avg, p.avg), t3 = d(k.rate, p.rate, { isPct: true });
+  const blocks = [
+    E.block('Main figures', E.tiles([
+      { label: 'CSAT %', value: E.pct(k.csat), tone: csatTone, sub: `${t1.text} · target ${Math.round(target * 100)}%`, subTone: t1.tone },
+      { label: 'Average score', value: k.avg == null ? '–' : `${k.avg.toFixed(2)} / 5`, sub: t2.text, subTone: t2.tone },
+      { label: 'Response rate', value: E.pct(k.rate), sub: t3.text, subTone: t3.tone },
+      { label: 'Surveys sent', value: String(k.sent), sub: `${k.n} answered` },
+      { label: 'Low scores (1–2)', value: String(k.det), tone: k.det ? 'bad' : undefined, sub: `${k.open_followups} still to follow up` },
+      { label: 'Time to respond', value: hours(k.median_hours), sub: 'median, email to answer' },
+    ])),
+  ];
+  const weeks = m.trend.filter(w => w.n > 0).slice(-13);
+  if (weeks.length) blocks.push(E.block('CSAT % by week', E.columns(weeks.map(w => ({ label: new Date(w.week).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+    share: w.csat, value: E.pct(w.csat, 0), color: w.csat >= target ? E.C.good : E.C.accent }))), `green = at or above ${Math.round(target * 100)}%`));
+  const dist = [5, 4, 3, 2, 1].map(s => ({ label: `${s}`, count: (m.dist.find(x => x.score === s) || { c: 0 }).c, color: E.C.score[s - 1] }));
+  if (dist.some(x => x.count)) blocks.push(E.block('Score distribution', E.stacked(dist.map(x => ({ ...x, label: { 5: '5 Very satisfied', 4: '4 Satisfied', 3: '3 Neutral', 2: '2 Dissatisfied', 1: '1 Very dissatisfied' }[x.label] })))));
+  const groups = m.byGroup.filter(g => g.n >= 5).slice(0, 8);
+  if (groups.length) blocks.push(E.block('CSAT % by owner group', E.hbars(groups.map(g => ({ label: g.key, sub: `${g.n} responses`, share: g.csat, value: E.pct(g.csat),
+    color: g.csat >= target ? E.C.good : g.csat >= target - 0.1 ? E.C.warn : E.C.bad }))), 'at least 5 responses'));
+  const html = E.shell({ title: scheduleName || title, subtitle: periodLabel(period.from, period.to), message, intro: `Owner groups: ${esc(label)}`, blocks, footer: footer(producedBy, !!scheduleName) });
+  const text = `${scheduleName || title} – ${periodLabel(period.from, period.to)}\nOwner groups: ${label}\nCSAT ${E.pct(k.csat)} (target ${Math.round(target * 100)}%) · average ${k.avg == null ? '–' : k.avg.toFixed(2)} · response rate ${E.pct(k.rate)} · ${k.sent} surveys sent · ${k.det} low scores\nThe full report is attached as a PDF.`;
   return { html, text };
 }
 
 async function logRun(r) {
-  await db.query(`INSERT INTO report_runs(schedule_id, kind, actor, owner_login, recipients, period_from, period_to, groups, sections, status, error)
-                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-    [r.scheduleId || null, r.kind, r.actor, r.owner || null, r.recipients || null, r.period.from, r.period.to, r.groups, r.sections, r.status, r.error || null]);
+  await db.query(`INSERT INTO report_runs(schedule_id, kind, actor, owner_login, recipients, period_from, period_to, groups, sections, status, error, form_id, title)
+                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+    [r.scheduleId || null, r.kind, r.actor, r.owner || null, r.recipients || null, r.period.from, r.period.to, r.groups || null, r.sections || null, r.status, r.error || null, r.formId || null, r.title || null]);
+}
+
+// ---------- stakeholder survey reports ----------
+const safeName = s => String(s).replace(/[^\w\- ()]+/g, '').trim().replace(/\s+/g, '-').slice(0, 80) || 'survey';
+async function buildSurveyReport(form, { includeNames = false, producedBy }) {
+  const res = await formsSvc.results(form);
+  const pdf = renderSurveyPdf({ form, res, includeNames, producedBy });
+  return { res, pdf, filename: `${safeName(form.title)}-results.pdf` };
+}
+// Survey results email: figure tiles, NPS mix and every rating grid as bars – never names.
+function surveyEmail(form, res, { message, producedBy, automatic = false }) {
+  const E = mailKit, { stats, summary, numbers } = res;
+  const nps = summary.find(s => s.q.type === 'nps' && s.n);
+  const rows = summary.filter(s => s.q.type === 'likert').flatMap(s => s.rows).filter(r => r.n);
+  const avg = rows.length ? rows.reduce((a, r) => a + r.avg * r.n, 0) / rows.reduce((a, r) => a + r.n, 0) : null;
+  const blocks = [E.block('Main figures', E.tiles([
+    { label: 'Responses', value: String(stats.responded), sub: `of ${stats.invited} invited` },
+    { label: 'Response rate', value: E.pct(stats.rate, 0), sub: `${stats.opened} opened the link` },
+    { label: 'Average rating', value: avg == null ? '–' : `${avg.toFixed(2)} / 5`, sub: 'all rating-grid answers' },
+    ...(nps ? [{ label: 'NPS', value: String(Math.round(nps.score)), tone: nps.score >= 30 ? 'good' : nps.score >= 0 ? 'warn' : 'bad', sub: `${nps.promoters} promoter${nps.promoters === 1 ? '' : 's'} · ${nps.detractors} detractor${nps.detractors === 1 ? '' : 's'}` }] : []),
+  ]))];
+  if (nps) blocks.push(E.block('Net Promoter Score', E.stacked([{ label: 'Promoters (9–10)', count: nps.promoters, color: E.C.good }, { label: 'Passives (7–8)', count: nps.passives, color: E.C.score[2] },
+    { label: 'Detractors (0–6)', count: nps.detractors, color: E.C.bad }])));
+  for (const s of summary) {
+    if (s.q.type === 'likert' && s.n) blocks.push(E.block(`${numbers[s.q.id]}. ${s.q.title}`, E.hbars(s.rows.map(r => ({ label: r.row.label, share: r.avg == null ? 0 : (r.avg - 1) / (s.q.scale.length - 1),
+      value: r.avg == null ? '–' : `${r.avg.toFixed(2)} · ${E.pct(r.positive, 0)}`, color: r.avg == null ? E.C.track : r.avg >= 4 ? E.C.good : r.avg >= 3 ? E.C.accent : E.C.bad }))), 'average · % positive'));
+    if ((s.q.type === 'choice' || s.q.type === 'checkbox') && s.n) { const max = Math.max(1, ...Object.values(s.counts));
+      blocks.push(E.block(`${numbers[s.q.id]}. ${s.q.title}`, E.hbars(s.q.options.map(o => ({ label: o.label, share: s.counts[o.id] / max, value: String(s.counts[o.id]) }))))); }
+  }
+  const comments = summary.filter(s => s.q.type === 'text').reduce((a, s) => a + s.n, 0);
+  const status = form.status === 'closed' ? `Final results – the survey closed on ${new Date(form.closed_at || Date.now()).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.` : 'Results so far – the survey is still open.';
+  const html = E.shell({ title: form.title, subtitle: 'Stakeholder survey results', message, intro: `${status}${comments ? ` ${comments} written comment${comments === 1 ? ' is' : 's are'} in the PDF.` : ''}`, blocks,
+    footer: `${automatic ? 'Sent automatically when the survey closed' : 'Sent'} from ${esc(config.brand.product)}${automatic ? '' : ` by ${esc(producedBy)}`}. The full results are attached as a PDF. For internal use only – please don't forward outside the company.` });
+  const text = `${form.title} – stakeholder survey results\n${status}\nResponses ${stats.responded} of ${stats.invited} (${E.pct(stats.rate, 0)}) · average rating ${avg == null ? '–' : avg.toFixed(2)}${nps ? ` · NPS ${Math.round(nps.score)}` : ''}\nThe full results are attached as a PDF.`;
+  return { html, text };
+}
+// Emails one survey's results. Names only with includeNames; the Excel file only with excel.
+async function sendSurveyReport({ form, to, includeNames = false, excel = false, message, actor, owner, kind = 'send' }) {
+  const period = { from: form.opened_at || form.created_at, to: form.closed_at || new Date() };
+  const base = { kind, actor, owner, recipients: to, period, sections: ['survey', ...(includeNames ? ['names'] : []), ...(excel ? ['excel'] : [])], formId: form.id, title: form.title };
+  try {
+    const r = await buildSurveyReport(form, { includeNames, producedBy: actor });
+    const attachments = [{ filename: r.filename, content: r.pdf, contentType: 'application/pdf' }];
+    if (excel) attachments.push({ filename: `${safeName(form.title)}-responses.csv`, content: Buffer.from(await formsSvc.exportCsv(form, { anonymous: !includeNames }), 'utf8'), contentType: 'text/csv' });
+    await sendMail({ to, subject: `Results: ${form.title}`, ...surveyEmail(form, r.res, { message, producedBy: actor, automatic: kind === 'on_close' }), attachments }, { direct: true });
+    await logRun({ ...base, status: 'ok' });
+    return r;
+  } catch (e) {
+    await logRun({ ...base, status: 'failed', error: e.message }).catch(() => {});
+    throw e;
+  }
+}
+// "Email the results when the survey closes" (opt-in per survey). Called after a manual close and by the scheduler.
+async function sendResultsOnClose(formId) {
+  const f = (await db.query('SELECT * FROM forms WHERE id = $1', [formId])).rows[0];
+  if (!f || f.status !== 'closed') return { sent: false };
+  const form = { ...f, settings: formsSvc.settingsOf(f) }, o = form.settings.reportOnClose || {};
+  if (!o.enabled || !(o.recipients || []).length) return { sent: false };
+  try {
+    await sendSurveyReport({ form, to: o.recipients, includeNames: !!o.names, excel: !!o.excel, actor: `${config.brand.product} (survey closed)`, owner: form.owner_login, kind: 'on_close' });
+    await db.query('UPDATE forms SET report_sent_at = now(), report_error = NULL WHERE id = $1', [form.id]);
+    return { sent: true };
+  } catch (e) {
+    console.error(`[reports] results of "${form.title}" could not be emailed:`, e.message);
+    await db.query('UPDATE forms SET report_error = $2 WHERE id = $1', [form.id, e.message.slice(0, 300)]);
+    return { sent: false, error: e.message };
+  }
 }
 
 // Builds and emails one report. Throws on failure (after logging it).
@@ -89,7 +164,7 @@ async function sendReport({ to, period, groups, sections, actor, owner, message,
   const title = isCustom(sections) ? 'CSAT report (custom)' : 'CSAT report';
   try {
     const r = await buildReport({ period, groups, sections, producedBy: actor, title });
-    const mail = reportEmail({ title, period, label: r.label, kpis: r.kpis, target: r.target, message, producedBy: actor, scheduleName });
+    const mail = reportEmail({ title, period, label: r.label, m: r.m, target: r.target, message, producedBy: actor, scheduleName });
     await sendMail({ to, subject: `${scheduleName || title} · ${periodLabel(period.from, period.to)}`, ...mail,
       attachments: [{ filename: r.filename, content: r.pdf, contentType: 'application/pdf' }] }, { direct: true });
     await logRun({ kind, actor, owner, recipients: to, period, groups, sections, scheduleId, status: 'ok' });
@@ -168,9 +243,9 @@ async function runDueReports(now = new Date()) {
 
 async function listRuns(admin, limit = 30) {
   const own = admin.role === 'global' ? null : ownerOf(admin);
-  return (await db.query(`SELECT r.*, s.name AS schedule_name FROM report_runs r LEFT JOIN scheduled_reports s ON s.id = r.schedule_id
+  return (await db.query(`SELECT r.*, s.name AS schedule_name, coalesce(f.title, r.title) AS form_title FROM report_runs r LEFT JOIN scheduled_reports s ON s.id = r.schedule_id LEFT JOIN forms f ON f.id = r.form_id
       WHERE ($1::text IS NULL OR r.owner_login = $1) ORDER BY r.at DESC LIMIT $2`, [own, limit])).rows;
 }
 
-module.exports = { recipients, resolveGroups, buildReport, sendReport, logRun, listSchedules, getSchedule, saveSchedule, setScheduleEnabled, deleteSchedule,
+module.exports = { recipients, resolveGroups, buildReport, sendReport, logRun, buildSurveyReport, sendSurveyReport, sendResultsOnClose, surveyEmail, reportEmail, listSchedules, getSchedule, saveSchedule, setScheduleEnabled, deleteSchedule,
   sendScheduleNow, runDueReports, listRuns, ownerOf };

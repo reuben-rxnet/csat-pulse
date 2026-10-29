@@ -59,6 +59,24 @@ Dependencies are only `pg` and `nodemailer`; the web layer is plain `node:http` 
   cookie csat_session (SESSION_SECRET, SESSION_HOURS). login = preferred_username/upn/email → ADMIN_EMAILS or app role
   OIDC_ADMIN_ROLE (CSAT.GlobalAdmin) = global admin, else team admin via HDA. Routes /auth/login, /auth/callback,
   /auth/logout, /auth/signed-out. Fake provider for testing: npm run mock:oidc (:4020). Tests: test/oidc.test.js.
+- Stakeholder surveys (built 2026-10-29, "like MS Forms"): /admin/forms. Tables forms / form_recipients / form_responses
+  (migration 007). Pure logic in src/forms/model.js (question types section/likert/rating/choice/checkbox/text/nps,
+  validateAnswers, formToAnswers, summarize, toCsv – tested), templates in src/forms/templates.js (RxSolutions quarterly
+  survey from design reference/), service src/services/forms.js, pages src/web/forms-views.js, builder
+  public/forms-builder.js (autosave JSON), answer page public/form-fill.js (autosave drafts). Personal link /f/<token> per
+  recipient (named answers, one each); invitations + reminders sent direct, only to FORM_RECIPIENT_DOMAINS (wildcards,
+  default essilor*,luxottica*,nikonlenswear.com – the 20 domains past respondents used). "Send a test to me" = is_test
+  recipients: work on drafts, left out of all results/export. Global admins see all surveys, team admins their own.
+  Scheduler closes at closes_at and sends due reminders (runFormJobs). Scope for now: builder, sending, results only –
+  ticket/KPI benchmark dashboard deliberately not built (Reuben, 2026-10-29).
+- Survey results via Reports (built 2026-10-29): Reports › Stakeholder survey (?kind=survey) – PDF by
+  src/report/survey-layout.js, email body by src/mail/report-email.js (tiles + bars as table cells, Outlook-safe; also
+  used by the ticket report email). Decisions (Reuben): names OFF by default (PDF, email and Excel anonymous unless
+  ticked); PDF always attached, Excel only when ticked; "email the results when the survey closes" is opt-in per
+  survey (settings.reportOnClose; sent by reports.sendResultsOnClose on manual close or the scheduler's close date –
+  extending the close date never sends); quarter-on-quarter comparison later, but Results pages link previous/next
+  rounds (copied_from). Company domains for surveys and reports share src/domains.js (wildcards, default
+  essilor*,luxottica*,nikonlenswear.com). Migration 008: report_runs.form_id/title, forms.report_sent_at/report_error.
 - Email via Microsoft Graph or SMTP (MAIL_TRANSPORT=graph|smtp|file). Optional Outlook Actionable Messages.
 
 ## Layout

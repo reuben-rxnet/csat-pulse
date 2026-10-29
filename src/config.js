@@ -82,9 +82,15 @@ const config = {
     email: env('SUPPORT_EMAIL', 'reuben.dsouza@essilor.com'),
   },
 
+  // Stakeholder surveys may only be sent to these company domains. "*" is a wildcard and subdomains count:
+  // "essilor*" covers essilor.co.th, essilorusa.com, cn.essilor.com, ext.essilorluxottica.id …; empty = any address.
+  forms: {
+    recipientDomains: env('FORM_RECIPIENT_DOMAINS', 'essilor*,luxottica*,nikonlenswear.com').split(',').map(d => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean),
+  },
+
   reports: {
     // Reports may only be emailed to these domains (and their subdomains). Empty = any address.
-    recipientDomains: env('REPORT_RECIPIENT_DOMAINS', 'essilor.com,luxottica.com,essilorluxottica.com').split(',').map(d => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean),
+    recipientDomains: env('REPORT_RECIPIENT_DOMAINS', 'essilor*,luxottica*,nikonlenswear.com').split(',').map(d => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean),
     maxRecipients: int('REPORT_MAX_RECIPIENTS', 50),
   },
 

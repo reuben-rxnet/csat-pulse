@@ -3,7 +3,8 @@
 const config = require('./config');
 const { pollClosedTickets, syncGroups, getState } = require('./services/poller');
 const { processQueue } = require('./services/sender');
-const { runDueReports } = require('./services/reports');
+const { runDueReports, sendResultsOnClose } = require('./services/reports');
+const { runFormJobs } = require('./services/forms');
 
 let running = false;
 
@@ -26,6 +27,9 @@ async function tick() {
   try {
     const r = await runDueReports();
     if (r.sent || r.failed) console.log(`[scheduler] reports sent=${r.sent} failed=${r.failed}`);
+    const f = await runFormJobs();
+    for (const id of f.closedIds) await sendResultsOnClose(id); // only when that survey's "email the results" option is on
+    if (f.closed || f.reminded) console.log(`[scheduler] stakeholder surveys closed=${f.closed} reminders=${f.reminded}`);
   } catch (e) {
     console.error('[scheduler] reports failed:', e.message);
   } finally { running = false; }

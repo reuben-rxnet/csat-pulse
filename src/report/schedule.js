@@ -1,5 +1,6 @@
 'use strict';
 // Pure helpers for PDF reports: report sections, periods, next send time and recipient checks. Times use the server's local time zone.
+const { domainAllowed } = require('../domains');
 
 // Main figures are always included. "agents" (ticket owner names) only goes into custom reports.
 const SECTIONS = [
@@ -82,7 +83,7 @@ function parseRecipients(text, { domains = [], max = 50 } = {}) {
     const e = raw.toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { invalid.push(raw); continue; }
     const host = e.split('@')[1];
-    if (domains.length && !domains.some(d => host === d || host.endsWith('.' + d))) { blocked.push(e); continue; }
+    if (!domainAllowed(host, domains)) { blocked.push(e); continue; }
     if (!emails.includes(e)) emails.push(e);
   }
   const error = invalid.length ? `Not a valid email address: ${invalid.join(', ')}`

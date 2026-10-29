@@ -7,6 +7,11 @@ const { esc } = require('../mail/templates');
 const { describeRules, describeExclusions } = require('../services/summary');
 
 const WHATS_NEW = [
+  ['29 Oct 2026', [
+    'Stakeholder survey results can be sent from <b>Reports</b> (PDF, optional Excel, no names unless ticked), and optionally emailed automatically when a survey closes. Results pages link to the previous and next quarter’s round.',
+    'Report emails – ticket CSAT and stakeholder surveys – now show the main figures and charts in the email itself, with the PDF attached.',
+    'New <b>Stakeholder surveys</b>: build a survey like Microsoft Forms (rating grids, choice, text, stars, NPS), send each stakeholder a personal email link with reminders, and see every named answer with charts, NPS and an Excel export. Includes the RxSolutions quarterly survey as a template, “Send a test to me”, and Duplicate for next quarter.',
+  ]],
   ['21 Oct 2026', [
     'Company single sign-on (OpenID Connect, e.g. Microsoft Entra ID) is ready: once IAM has registered the app, people sign in with their company account and <b>Sign out</b> appears next to their name.',
     'CSAT Pulse stops signing in to HDA after a rejected password, so an AD account can’t be locked; global admins see a red bar with <b>Try again</b>.',
@@ -48,6 +53,11 @@ const KEYWORDS = {
   'report-email': 'send share email report stakeholder recipients management',
   'report-schedule': 'schedule automatic recurring weekly monthly quarterly regular report email',
   'report-agents': 'agent agents ticket owner names people technician custom report',
+  'forms-create': 'stakeholder survey form ms forms microsoft forms quarterly questionnaire build create new questions likert grid nps template',
+  'forms-send': 'send invite invitation email stakeholders recipients personal link reminder close date test',
+  'forms-results': 'results responses answers names who answered export excel nps chart respondents',
+  'forms-next-quarter': 'duplicate copy next quarter repeat again reuse previous round',
+  'forms-report': 'report pdf email results manager boss stakeholders send results close automatic excel names anonymous',
   history: 'audit log changes who changed history trail',
   'find-ticket': 'search ticket lookup status survey log where is missing survey not sent',
   'missing-email': 'no email invalid email wrong address bounce missing email contact',
@@ -136,6 +146,38 @@ function tasks(ctx) {
         `Open ${groupsPage} → <b>Change history</b>.`,
         'Every change is listed in words, newest first: groups switched on or off, rules, sources, reports, follow-ups, emails typed in. Use the search box to find one.',
       ]) + (team ? '<p class="small muted">You see changes about your own owner groups.</p>' : '')),
+    ]],
+    ['Stakeholder surveys', [
+      task('forms-create', 'Build a stakeholder survey (like Microsoft Forms)', steps([
+        'Open <b>Stakeholder surveys</b> in the top menu.',
+        'Under <b>New survey</b>, pick a starting point – <b>RxSolutions quarterly CSAT</b> is the quarterly MS Forms survey, ready to use – type the period (e.g. 2026 Q4) and click <b>Create survey</b>.',
+        'Edit the title, introduction and cover image, then each question. Hover between two questions and click <b>+</b> to insert one: rating grid, choice, multiple choice, text, star rating, Net Promoter Score or a section heading.',
+        'Use ↑ ↓ (or drag ⋮⋮) to move a question, ⧉ to duplicate and 🗑 to delete. Switch <b>Required</b> on or off per question. Everything saves by itself.',
+        'Click <b>Preview</b> to see exactly what people will see.',
+      ]) + '<p class="small muted">Global admins see every survey; team admins see the surveys they created.</p>'),
+      task('forms-send', 'Send a survey to stakeholders by personal email', steps([
+        'Open the survey and click <b>Send</b>.',
+        'Under <b>Who should answer?</b>, paste the people – one per line, an email with or without the name (e.g. from Outlook or Excel) – and click <b>Add to the list</b>. Missing names are looked up in HDA.',
+        'Check the email subject and message, the close date and reminders, then <b>Save</b>. <b>Preview the email</b> shows the invitation.',
+        'Try it with <b>Send a test to me</b> – test answers never count.',
+        'Click <b>Send invitations</b>. Everyone gets a personal email (“Hello Phawinee, …”) with their own link, so every answer shows their name.',
+      ]) + '<p class="small muted">Only company addresses are accepted. People added later are invited with the same button. <b>Remind now</b> emails everyone who hasn’t answered; automatic reminders follow the setting. <b>Close survey</b> stops answers (you can reopen it).</p>'),
+      task('forms-results', 'See who answered and what they said', steps([
+        'Open the survey and click <b>Results</b>.',
+        'The tiles show responses, response rate, average rating, NPS and time to complete. Below, every question has its chart – coloured bars per row for rating grids, the NPS gauge, and all comments with the person’s name.',
+        'Under <b>Respondents</b>, click <b>View answers</b> to read one person’s full response (Previous / Next to move between them).',
+        'Click <b>Download for Excel</b> for one row per person, like the MS Forms export.',
+      ])),
+      task('forms-report', 'Send survey results to your manager or stakeholders', steps([
+        'Open <b>Reports</b> → <b>Stakeholder survey</b> (or click <b>Send results report</b> on the survey’s Results page).',
+        'Pick the survey – every survey is listed, so earlier quarters can be sent again.',
+        'Leave <b>Include respondent names</b> off unless the readers should see who said what. Tick <b>Attach the answers as an Excel file</b> only if they need the raw answers.',
+        'Click <b>Download PDF</b>, or type the recipients (and a message) and click <b>Send report now</b>. The email shows the main figures and charts; the PDF is attached.',
+      ]) + '<p class="small muted">To send the results automatically when a survey closes, switch on <b>Results report when the survey closes</b> on its Send page. It is off unless you switch it on, and moving the close date later never sends anything.</p>'),
+      task('forms-next-quarter', 'Run the same survey again next quarter', steps([
+        'Open <b>Stakeholder surveys</b> and click <b>Duplicate</b> next to last quarter’s survey.',
+        'The copy is a new draft with the same questions and recipients, and the period in the title moves on (2026 Q4 → 2027 Q1). Check it, then send it.',
+      ])),
     ]],
     ['Fixing problems', [
       task('find-ticket', 'Find out what happened to a ticket', steps([
@@ -260,7 +302,7 @@ const ICONS = {
   layers: 'M12 2l10 5-10 5L2 7zM2 17l10 5 10-5M2 12l10 5 10-5', globe: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20', wrench: 'M14.7 6.3a4 4 0 0 0 5 5L22 14l-8 8-2.3-2.3a4 4 0 0 0-5-5L4 12l8-8z',
 };
 const icon = (name, cls = 'ico') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICONS[name]}"/></svg>`;
-const GROUP_ICONS = { 'Setting up surveys': 'sliders', Results: 'chart', 'Fixing problems': 'wrench', 'Global admins': 'shield' };
+const GROUP_ICONS = { 'Setting up surveys': 'sliders', Results: 'chart', 'Stakeholder surveys': 'list', 'Fixing problems': 'wrench', 'Global admins': 'shield' };
 
 // forId: the guide for the page the person came from (menu Help link) – suggested at the top, without jumping down to it.
 function helpPage(admin, { settings, defaultSources, layout, forId = '' }) {
@@ -282,6 +324,7 @@ function helpPage(admin, { settings, defaultSources, layout, forId = '' }) {
     ['sliders', team ? 'My groups' : 'Admin settings', '/admin/settings', team ? 'Switch surveys on or off for your owner groups, set the group lead and see the change history.'
       : 'Switch owner groups and sources on or off, set the default send rules and give team access.'],
     ['list', 'Sources & rules', '/admin/settings', 'Per owner group: which sources and ticket types get surveys, timing, reminders, expiry and the low-score alert level.'],
+    ['list', 'Stakeholder surveys', '/admin/forms', 'Build surveys like Microsoft Forms, send a personal link to each stakeholder, and see every named answer, chart and NPS.'],
     ['file', 'Reports', '/admin/reports', 'PDF reports for stakeholders – download, email now, or schedule weekly, monthly or quarterly.'],
     ['search', 'Survey log', '/admin/surveys', 'Every solved ticket CSAT Pulse checked: sent, answered, expired or skipped – and why.'],
     ['mail', 'Missing emails', '/admin/missing', 'Type the address for tickets whose HDA contact has no valid email, or download the list for the HDA team.'],
